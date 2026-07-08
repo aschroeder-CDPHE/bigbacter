@@ -71,25 +71,48 @@ include { CUSTOM_DUMPSOFTWAREVERSIONS } from '../modules/nf-core/custom/dumpsoft
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
+// Safely list a path. Cloud object stores may not have every expected pseudo-directory yet.
+def safe_list ( path_obj ) {
+    if (! path_obj.exists()) {
+        return []
+    }
+    listed = path_obj.list()
+    return listed ?: []
+}
+
+// Write text to a path in one operation. This avoids APPEND mode, which is not supported by
+// Google Cloud Storage's NIO filesystem provider.
+def write_text_once ( path_obj, text_to_write ) {
+    parent_dir = path_obj.getParent()
+    if (parent_dir) {
+        parent_dir.mkdirs()
+    }
+    if (path_obj.exists()) {
+        path_obj.delete()
+    }
+    path_obj.text = text_to_write
+}
+
 // get list of isolates in each cluster for a taxa
 def db_taxa_clusters ( taxa , timestamp ) {
     // determine path to taxa database
     clusters_path = file(params.db).resolve(taxa).resolve("clusters")
     // get list of isolates associated with each cluster
     taxadir = file(params.outdir).resolve(timestamp.toString()).resolve(taxa)
-    taxadir.mkdirs()
     db_info_file = taxadir.resolve(taxa+"-db-info.txt")
-    db_info_file.delete()
-    clusters = clusters_path.list()
+    db_info_text = new StringBuilder()
+
+    clusters = safe_list(clusters_path)
     for ( cluster in clusters ) {
         // list isolates
-        isolates = clusters_path.resolve(cluster).resolve("snippy").list()
+        isolates = safe_list(clusters_path.resolve(cluster).resolve("snippy"))
         // create list
         for ( iso in isolates ) {
             row = taxa+"\t"+cluster+"\t"+iso.replace(".tar.gz", "")+"\n"
-            db_info_file.append(row) 
+            db_info_text << row
         }
     }
+    write_text_once(db_info_file, db_info_text.toString())
     return db_info_file
 }
 
@@ -98,19 +121,19 @@ def db_info ( db_path, outdir_path, timestamp, wait_file ) {
     // Build output file path
     ts_str = timestamp.toString()
     db_info = file(outdir_path).resolve(ts_str).resolve(ts_str+"-db-info.csv")
-    if (db_info.exists()) { db_info.delete() }
+    db_info_text = new StringBuilder()
     // Add header
-    db_info.append("Taxon,Cluster,File_Type,File_Name,Size,File_Date,File_Path\n")
+    db_info_text << "Taxon,Cluster,File_Type,File_Name,Size,File_Date,File_Path\n"
     // Create empty variables for total counts
     pp_size       = 0
     ref_size      = 0
     snippy_size   = 0
     assembly_size = 0
     // Iterate through taxa
-    for ( taxon in file(db_path).list() ) {
+    for ( taxon in safe_list(file(db_path)) ) {
         taxon_path = file(db_path).resolve(taxon)
         // Iterate through PopPUNK files
-        for ( pp in file(taxon_path).resolve("pp_db").list() ) {
+        for ( pp in safe_list(file(taxon_path).resolve("pp_db")) ) {
             // Build file path
             pp_file = file(taxon_path).resolve("pp_db").resolve(pp)
             // Total size
@@ -118,15 +141,15 @@ def db_info ( db_path, outdir_path, timestamp, wait_file ) {
             pp_size = pp_size + pp_file_size
             // File date
             pp_date = new Date(pp_file.lastModified())
-            // Create row & append
-            pp_row = taxon+",NA,PopPUNK_Database,"+pp+","+pp_file_size+","+pp_date+","+pp_file.toUriString()+"\n" 
-            ! pp_row ?: db_info.append(pp_row)
+            // Create row
+            pp_row = taxon+",NA,PopPUNK_Database,"+pp+","+pp_file_size+","+pp_date+","+pp_file.toUriString()+"\n"
+            db_info_text << pp_row
         }
         // Iterate through cluster files
-        for ( cluster in file(taxon_path).resolve("clusters").list() ) {
+        for ( cluster in safe_list(file(taxon_path).resolve("clusters")) ) {
             cluster_path = file(taxon_path).resolve("clusters").resolve(cluster)
             // Reference files
-            for ( ref in file(cluster_path).resolve("ref").list() ) {
+            for ( ref in safe_list(file(cluster_path).resolve("ref")) ) {
                 // Build file path
                 ref_file = file(cluster_path).resolve("ref").resolve(ref)
                 // Total size
@@ -134,12 +157,12 @@ def db_info ( db_path, outdir_path, timestamp, wait_file ) {
                 ref_size = ref_size + ref_file_size
                 // File date
                 ref_date = new Date(ref_file.lastModified())
-                // Create row & append
+                // Create row
                 ref_row = taxon+","+cluster+",SNP_Reference,"+ref+","+ref_file_size+","+ref_date+","+ref_file.toUriString()+"\n"
-                ! ref_row ?: db_info.append(ref_row)
+                db_info_text << ref_row
             }
             // Snippy files
-            for ( snippy in file(cluster_path).resolve("snippy").list() ) { 
+            for ( snippy in safe_list(file(cluster_path).resolve("snippy")) ) {
                 // Build file path
                 snippy_file = file(cluster_path).resolve("snippy").resolve(snippy)
                 // Total size
@@ -147,12 +170,12 @@ def db_info ( db_path, outdir_path, timestamp, wait_file ) {
                 snippy_size = snippy_size + snippy_file_size
                 // File date
                 snippy_date = new Date(snippy_file.lastModified())
-                // Create row & append
+                // Create row
                 snippy_row = taxon+","+cluster+",SNP_Files,"+snippy+","+snippy_file_size+","+snippy_date+","+snippy_file.toUriString()+"\n"
-                ! snippy_row ?: db_info.append(snippy_row)
+                db_info_text << snippy_row
             }
             // Assembly files
-            for ( assembly in file(cluster_path).resolve("assembly").list() ) { 
+            for ( assembly in safe_list(file(cluster_path).resolve("assembly")) ) {
                 // Build file path
                 assembly_file = file(cluster_path).resolve("assembly").resolve(assembly)
                 // Total size
@@ -160,12 +183,15 @@ def db_info ( db_path, outdir_path, timestamp, wait_file ) {
                 assembly_size = assembly_size + assembly_file_size
                 // File date
                 assembly_date = new Date(assembly_file.lastModified())
-                // Create row & append
+                // Create row
                 assembly_row = taxon+","+cluster+",Assembly_File,"+assembly+","+assembly_file_size+","+assembly_date+","+assembly_file.toUriString()+"\n"
-                ! assembly_row ?: db_info.append(assembly_row)
+                db_info_text << assembly_row
             }
         }
     }
+    // Write the completed CSV once. This avoids unsupported APPEND operations on gs:// paths.
+    write_text_once(db_info, db_info_text.toString())
+
     // Get total and convert to GB
     total_size = pp_size+ref_size+snippy_size+assembly_size
     total_size = MemoryUnit.of(total_size).toGiga()
