@@ -82,7 +82,7 @@ rename_file ${db} '_clusters.csv' 'unword|microreact' ${new_name} "false"
 rename_file ${db} '.h5' '\.refs\.' ${new_name} "false"
 rename_file ${db} '_fit.npz' ' ' ${new_name} "false"
 rename_file ${db} '_fit.pkl' ' ' ${new_name} "false"
-rename_file ${db} '.dists.npy' '\.refs\.' ${new_name} "false"
+rename_file ${db} '.dists.npy' '\.refs\.' ${new_name} "true"
 rename_file ${db} '.dists.pkl' '\.refs\.' ${new_name} "false"
 rename_file ${db} '_graph.gt' '\.refs' ${new_name} "false"
 
